@@ -30,7 +30,8 @@ RUN apt-get update -qq && \
 RUN gem install bundler -v 2.6.5
 
 COPY Gemfile Gemfile.lock ./
-RUN bundle install
+RUN bundle install && \
+    rm -rf /usr/local/bundle/cache
 
 COPY package.json yarn.lock ./
 COPY .yarnrc.yml ./
@@ -50,6 +51,7 @@ FROM base AS runtime
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
+      git \
       libpq5 \
       libxml2 \
       libxslt1.1 \
@@ -57,7 +59,18 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /usr/local/bundle /usr/local/bundle
-COPY --from=build /app /app
+
+COPY --from=build /app/app /app/app
+COPY --from=build /app/bin /app/bin
+COPY --from=build /app/config /app/config
+COPY --from=build /app/db /app/db
+COPY --from=build /app/lib /app/lib
+COPY --from=build /app/public /app/public
+COPY --from=build /app/Gemfile /app/Gemfile
+COPY --from=build /app/Gemfile.lock /app/Gemfile.lock
+COPY --from=build /app/Rakefile /app/Rakefile
+COPY --from=build /app/config.ru /app/config.ru
+COPY --from=build /app/.git /app/.git
 
 EXPOSE 3000
 
