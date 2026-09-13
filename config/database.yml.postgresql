@@ -27,4 +27,4 @@ staging:
 
 production:
   <<: *default
-  database: <%= "#{repository_name}_production" %>
+  database: <%= ENV.fetch('PG_DATABASE', 'quiz-it_production') %>
