@@ -67,10 +67,24 @@ jobs:
               "$IMAGE"
 
             echo "Waiting for application"
-            sleep 5
 
-            echo "Running health check"
-            curl --fail --silent --show-error \
-              http://127.0.0.1:3001/ > /dev/null
+            for i in {1..30}; do
+              if curl --fail --silent --show-error \
+                http://127.0.0.1:3001/ > /dev/null; then
+                echo "Application is healthy"
+                echo "Deployment successful"
+                exit 0
+              fi
 
-            echo "Deployment successful"
+              echo "Application not ready yet (attempt $i/30)"
+              sleep 2
+            done
+
+            echo "Application failed health check"
+            echo "Container status:"
+            sudo docker ps -a --filter "name=$CONTAINER"
+
+            echo "Container logs:"
+            sudo docker logs --tail 100 "$CONTAINER"
+
+            exit 1
