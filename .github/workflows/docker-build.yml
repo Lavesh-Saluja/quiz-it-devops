@@ -1,9 +1,10 @@
-name: Docker Build
+name: Build and Deploy
 
 on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
@@ -26,11 +27,50 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build image
+      - name: Build and push image
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/quizit:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/quizit:latest
+
+      - name: Deploy to VM
+        if: github.event_name == 'push'
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/quizit:${{ github.sha }}"
+            CONTAINER="quizit-container-test"
+
+            echo "Pulling $IMAGE"
+            sudo docker pull "$IMAGE"
+
+            echo "Stopping old container"
+            sudo docker stop "$CONTAINER" || true
+            sudo docker rm "$CONTAINER" || true
+
+            echo "Starting new container"
+            sudo docker run -d \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
+              --env-file /etc/quizit.env \
+              -e PG_HOST=172.17.0.1 \
+              -p 127.0.0.1:3001:3000 \
+              "$IMAGE"
+
+            echo "Waiting for application"
+            sleep 5
+
+            echo "Running health check"
+            curl --fail --silent --show-error \
+              http://127.0.0.1:3001/ > /dev/null
+
+            echo "Deployment successful"
