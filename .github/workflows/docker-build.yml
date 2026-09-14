@@ -50,8 +50,19 @@ jobs:
             IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/quizit:${{ github.sha }}"
             CONTAINER="quizit-container-test"
 
-            echo "Pulling $IMAGE"
+            echo "Pulling new image: $IMAGE"
             sudo docker pull "$IMAGE"
+
+            OLD_IMAGE=""
+
+            if sudo docker inspect "$CONTAINER" >/dev/null 2>&1; then
+              OLD_IMAGE=$(sudo docker inspect "$CONTAINER" \
+                --format '{{.Config.Image}}')
+
+              echo "Current image: $OLD_IMAGE"
+            else
+              echo "No existing container found"
+            fi
 
             echo "Stopping old container"
             sudo docker stop "$CONTAINER" || true
@@ -68,23 +79,68 @@ jobs:
 
             echo "Waiting for application"
 
+            HEALTHY=false
+
             for i in {1..30}; do
               if curl --fail --silent --show-error \
                 http://127.0.0.1:3001/ > /dev/null; then
+                HEALTHY=true
                 echo "Application is healthy"
-                echo "Deployment successful"
-                exit 0
+                break
               fi
 
               echo "Application not ready yet (attempt $i/30)"
               sleep 2
             done
 
-            echo "Application failed health check"
-            echo "Container status:"
-            sudo docker ps -a --filter "name=$CONTAINER"
+            if [ "$HEALTHY" = true ]; then
+              echo "Deployment successful"
+              exit 0
+            fi
 
-            echo "Container logs:"
+            echo "New deployment failed health check"
             sudo docker logs --tail 100 "$CONTAINER"
+
+            if [ -z "$OLD_IMAGE" ]; then
+              echo "No previous image available for rollback"
+              exit 1
+            fi
+
+            echo "Rolling back to: $OLD_IMAGE"
+
+            sudo docker stop "$CONTAINER" || true
+            sudo docker rm "$CONTAINER" || true
+
+            echo "Starting previous image"
+            sudo docker run -d \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
+              --env-file /etc/quizit.env \
+              -e PG_HOST=172.17.0.1 \
+              -p 127.0.0.1:3001:3000 \
+              "$OLD_IMAGE"
+
+            echo "Checking rollback"
+
+            ROLLBACK_HEALTHY=false
+
+            for i in {1..30}; do
+              if curl --fail --silent --show-error \
+                http://127.0.0.1:3001/ > /dev/null; then
+                ROLLBACK_HEALTHY=true
+                echo "Rollback successful"
+                break
+              fi
+
+              echo "Rollback not ready yet (attempt $i/30)"
+              sleep 2
+            done
+
+            if [ "$ROLLBACK_HEALTHY" = true ]; then
+              echo "Previous version restored successfully"
+            else
+              echo "Rollback health check failed"
+              sudo docker logs --tail 100 "$CONTAINER"
+            fi
 
             exit 1
