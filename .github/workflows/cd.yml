@@ -85,6 +85,7 @@ jobs:
           gcloud compute instance-templates create "${TEMPLATE_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
+            --instance-template-region="${GCP_REGION}" \
             --machine-type=e2-small \
             --network=default \
             --subnet=default \
