@@ -89,7 +89,6 @@ jobs:
             --network=default \
             --subnet=default \
             --tags=quizit-web \
-
             --scopes=cloud-platform \
             --image-family=debian-13 \
             --image-project=debian-cloud \
