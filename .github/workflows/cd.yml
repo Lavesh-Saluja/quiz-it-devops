@@ -74,7 +74,7 @@ jobs:
           echo "===== Generated image reference ====="
           grep '^IMAGE=' /tmp/quizit-startup.sh
 
-          grep -q "^IMAGE=${IMAGE}$" /tmp/quizit-startup.sh
+          grep -q "^IMAGE=\"${IMAGE}\"$" /tmp/quizit-startup.sh
 
       - name: Create regional instance template
         env:
