@@ -1,6 +1,10 @@
 name: CD
 
 on:
+  push:
+    branches:
+      - main
+
   workflow_dispatch:
 
 env:
@@ -103,4 +107,88 @@ jobs:
           gcloud compute instance-templates describe "${TEMPLATE_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --format="yaml(name,creationTimestamp,properties.machineType,properties.disks,properties.networkInterfaces,properties.tags,properties.serviceAccounts,properties.metadata)"
+            --format="yaml(
+              name,
+              creationTimestamp,
+              properties.machineType,
+              properties.disks,
+              properties.networkInterfaces,
+              properties.tags,
+              properties.serviceAccounts,
+              properties.metadata
+            )"
+
+  update-mig:
+    name: Update Managed Instance Group
+    runs-on: ubuntu-latest
+    needs: create-instance-template
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Update MIG instance template
+        env:
+          TEMPLATE_NAME: quizit-web-template-${{ github.sha }}
+        run: |
+          echo "===== Updating MIG ====="
+          echo "MIG: ${MIG_NAME}"
+          echo "Template: ${TEMPLATE_NAME}"
+
+          gcloud compute instance-groups managed set-instance-template "${MIG_NAME}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --template="${TEMPLATE_NAME}"
+
+      - name: Wait for target template
+        run: |
+          echo "===== Waiting for target template ====="
+
+          timeout 20m \
+            gcloud compute instance-groups managed wait-until "${MIG_NAME}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --version-target-reached
+
+      - name: Wait for MIG stability
+        run: |
+          echo "===== Waiting for MIG stability ====="
+
+          timeout 20m \
+            gcloud compute instance-groups managed wait-until "${MIG_NAME}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --stable
+
+      - name: Verify deployment
+        run: |
+          echo "===== Final MIG state ====="
+
+          gcloud compute instance-groups managed describe "${MIG_NAME}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --format="yaml(
+              targetSize,
+              instanceTemplate,
+              versions,
+              updatePolicy,
+              status
+            )"
+
+          echo
+          echo "===== Managed instances ====="
+
+          gcloud compute instance-groups managed list-instances "${MIG_NAME}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}"

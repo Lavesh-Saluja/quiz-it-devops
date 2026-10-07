@@ -42,7 +42,7 @@ Rails.application.routes.draw do
         end
     end
 
-  get "health", to: "health#index"
+  get "healthz", to: "health#index"
   root "home#index"
   get "*path", to: "home#index", via: :all
 end

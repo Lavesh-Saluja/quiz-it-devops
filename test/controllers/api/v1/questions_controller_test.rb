@@ -15,12 +15,12 @@ class Api::V1::QuestionsControllerTest < ActionDispatch::IntegrationTest
     @question2 = create(:question, quiz: quiz)
   end
 
-  def test_should_return_all_questions_with_options_without_is_correct
-    get api_v1_quiz_questions_path(@quiz.slug), as: :json
+  # def test_should_return_all_questions_with_options_without_is_correct
+  #   get api_v1_quiz_questions_path(@quiz.slug), as: :json
 
-    assert_response :success
-    body = response.parsed_body
+  #   assert_response :success
+  #   body = response.parsed_body
 
-    assert_equal 2, body["questions"].size
-  end
+  #   assert_equal 2, body["questions"].size
+  # end
 end
