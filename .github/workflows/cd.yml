@@ -13,7 +13,17 @@ env:
   MIG_NAME: quizit-web-mig
   DOCKER_IMAGE: laveshsaluja32/quizit
 
+# Never allow two production deployments to run at the same time.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+
 jobs:
+
+  # ============================================================
+  # 1. BUILD AND PUSH IMMUTABLE DOCKER IMAGE
+  # ============================================================
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
@@ -42,6 +52,10 @@ jobs:
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
 
+
+  # ============================================================
+  # 2. CREATE IMMUTABLE GCP INSTANCE TEMPLATE
+  # ============================================================
   create-instance-template:
     name: Create GCP Instance Template
     runs-on: ubuntu-latest
@@ -69,21 +83,28 @@ jobs:
         env:
           IMAGE: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
         run: |
+          set -euo pipefail
+
           test -n "${IMAGE}"
 
           echo "IMAGE=${IMAGE}"
 
-          sed "s|__IMAGE__|${IMAGE}|g" deploy/startup.sh > /tmp/quizit-startup.sh
+          sed "s|__IMAGE__|${IMAGE}|g" \
+            deploy/startup.sh \
+            > /tmp/quizit-startup.sh
 
           echo "===== Generated image reference ====="
           grep '^IMAGE=' /tmp/quizit-startup.sh
 
-          grep -q "^IMAGE=\"${IMAGE}\"$" /tmp/quizit-startup.sh
+          grep -q "^IMAGE=\"${IMAGE}\"$" \
+            /tmp/quizit-startup.sh
 
       - name: Create regional instance template
         env:
           TEMPLATE_NAME: quizit-web-template-${{ github.sha }}
         run: |
+          set -euo pipefail
+
           gcloud compute instance-templates create "${TEMPLATE_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
@@ -104,6 +125,8 @@ jobs:
         env:
           TEMPLATE_NAME: quizit-web-template-${{ github.sha }}
         run: |
+          set -euo pipefail
+
           gcloud compute instance-templates describe "${TEMPLATE_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
@@ -118,10 +141,185 @@ jobs:
               properties.metadata
             )"
 
-  update-mig:
-    name: Update Managed Instance Group
+
+  # ============================================================
+  # 3. RUN DATABASE MIGRATION ON A TEMPORARY VM
+  # ============================================================
+  migration:
+    name: Run Database Migration
     runs-on: ubuntu-latest
     needs: create-instance-template
+    timeout-minutes: 35
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      # ----------------------------------------------------------
+      # Prepare migration startup script with exact image SHA.
+      # ----------------------------------------------------------
+      - name: Prepare migration startup script
+        env:
+          IMAGE: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          test -n "${IMAGE}"
+
+          sed "s|__IMAGE__|${IMAGE}|g" \
+            deploy/migration-startup.sh \
+            > /tmp/quizit-migration-startup.sh
+
+          echo "===== Migration image ====="
+          grep '^IMAGE=' /tmp/quizit-migration-startup.sh
+
+          grep -q "^IMAGE=\"${IMAGE}\"$" \
+            /tmp/quizit-migration-startup.sh
+
+      # ----------------------------------------------------------
+      # Create temporary migration VM.
+      #
+      # This VM is NOT part of the MIG.
+      # It exists only to execute db:migrate once.
+      # ----------------------------------------------------------
+      - name: Create temporary migration VM
+        env:
+          MIGRATION_VM: quizit-migration-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          echo "===== Creating migration VM ====="
+          echo "VM: ${MIGRATION_VM}"
+
+          gcloud compute instances create "${MIGRATION_VM}" \
+            --project="${GCP_PROJECT_ID}" \
+            --zone="${GCP_REGION}-c" \
+            --machine-type=e2-small \
+            --network=default \
+            --subnet=default \
+            --service-account="${{ vars.GCP_VM_SERVICE_ACCOUNT }}" \
+            --scopes=cloud-platform \
+            --image-family=debian-13 \
+            --image-project=debian-cloud \
+            --boot-disk-size=20GB \
+            --boot-disk-type=pd-balanced \
+            --metadata=serial-port-enable=true \
+            --metadata-from-file=startup-script=/tmp/quizit-migration-startup.sh
+
+      # ----------------------------------------------------------
+      # Wait for migration startup script to report result.
+      #
+      # migration-startup.sh prints one of:
+      #
+      # DATABASE MIGRATION SUCCEEDED
+      # DATABASE MIGRATION FAILED
+      # ----------------------------------------------------------
+      - name: Wait for migration result
+        env:
+          MIGRATION_VM: quizit-migration-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          echo "===== Waiting for database migration ====="
+
+          MIGRATION_RESULT=""
+
+          for attempt in $(seq 1 180); do
+            echo
+            echo "===== Migration check ${attempt}/180 ====="
+
+            SERIAL_OUTPUT="$(
+              gcloud compute instances get-serial-port-output \
+                "${MIGRATION_VM}" \
+                --project="${GCP_PROJECT_ID}" \
+                --zone="${GCP_REGION}-c" \
+                --port=1 \
+                2>/dev/null || true
+            )"
+
+            if echo "${SERIAL_OUTPUT}" | grep -q \
+              "===== DATABASE MIGRATION SUCCEEDED ====="; then
+
+              MIGRATION_RESULT="success"
+              break
+            fi
+
+            if echo "${SERIAL_OUTPUT}" | grep -q \
+              "===== DATABASE MIGRATION FAILED ====="; then
+
+              MIGRATION_RESULT="failed"
+              break
+            fi
+
+            echo "Migration result not available yet."
+            echo "Waiting 10 seconds..."
+
+            sleep 10
+          done
+
+          echo
+          echo "===== Migration result: ${MIGRATION_RESULT:-timeout} ====="
+
+          case "${MIGRATION_RESULT}" in
+            success)
+              echo "✅ Database migration succeeded."
+              exit 0
+              ;;
+
+            failed)
+              echo "❌ Database migration failed."
+              exit 1
+              ;;
+
+            *)
+              echo "🚨 Database migration timed out."
+              exit 1
+              ;;
+          esac
+
+      # ----------------------------------------------------------
+      # ALWAYS delete temporary migration VM.
+      # ----------------------------------------------------------
+      - name: Delete temporary migration VM
+        if: ${{ always() }}
+        env:
+          MIGRATION_VM: quizit-migration-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          echo "===== Deleting migration VM ====="
+
+          gcloud compute instances delete "${MIGRATION_VM}" \
+            --project="${GCP_PROJECT_ID}" \
+            --zone="${GCP_REGION}-c" \
+            --quiet || true
+
+
+  # ============================================================
+  # 4. DEPLOY TO PRODUCTION WITH EXPLICIT ROLLBACK
+  # ============================================================
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: migration
+    timeout-minutes: 60
+
+    environment:
+      name: production
 
     permissions:
       contents: read
@@ -138,57 +336,270 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Update MIG instance template
+      # ----------------------------------------------------------
+      # Capture the currently running production template.
+      # This becomes our application rollback target.
+      # ----------------------------------------------------------
+      - name: Capture current production template
+        id: capture-template
+        run: |
+          set -euo pipefail
+
+          echo "===== Capturing current production template ====="
+
+          PREVIOUS_TEMPLATE="$(
+            gcloud compute instance-groups managed describe "${MIG_NAME}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format="value(instanceTemplate)"
+          )"
+
+          test -n "${PREVIOUS_TEMPLATE}"
+
+          echo "Previous production template:"
+          echo "${PREVIOUS_TEMPLATE}"
+
+          echo "previous_template=${PREVIOUS_TEMPLATE}" \
+            >> "${GITHUB_OUTPUT}"
+
+      # ----------------------------------------------------------
+      # Explicit deployment + rollback handling.
+      # ----------------------------------------------------------
+      - name: Deploy and handle rollback
         env:
           TEMPLATE_NAME: quizit-web-template-${{ github.sha }}
+          PREVIOUS_TEMPLATE: ${{ steps.capture-template.outputs.previous_template }}
         run: |
-          echo "===== Updating MIG ====="
-          echo "MIG: ${MIG_NAME}"
-          echo "Template: ${TEMPLATE_NAME}"
+          set -uo pipefail
 
-          gcloud compute instance-groups managed set-instance-template "${MIG_NAME}" \
+          echo "=================================================="
+          echo "STARTING PRODUCTION DEPLOYMENT"
+          echo "=================================================="
+
+          echo "MIG: ${MIG_NAME}"
+          echo "New template: ${TEMPLATE_NAME}"
+          echo "Previous template: ${PREVIOUS_TEMPLATE}"
+
+          DEPLOY_STATUS=0
+
+          # ======================================================
+          # STEP 1: Update MIG
+          # ======================================================
+          echo
+          echo "===== Updating MIG instance template ====="
+
+          gcloud compute instance-groups managed set-instance-template \
+            "${MIG_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --template="projects/${GCP_PROJECT_ID}/regions/${GCP_REGION}/instanceTemplates/${TEMPLATE_NAME}"
 
-      - name: Wait for target template
-        run: |
-          echo "===== Waiting for target template ====="
+          DEPLOY_STATUS=$?
+
+          if [ "${DEPLOY_STATUS}" -ne 0 ]; then
+            echo "❌ Failed to update MIG."
+          fi
+
+          # ======================================================
+          # STEP 2: Wait for new template
+          # ======================================================
+          if [ "${DEPLOY_STATUS}" -eq 0 ]; then
+            echo
+            echo "===== Waiting for target template ====="
+
+            timeout 20m \
+              gcloud compute instance-groups managed wait-until \
+                "${MIG_NAME}" \
+                --project="${GCP_PROJECT_ID}" \
+                --region="${GCP_REGION}" \
+                --version-target-reached
+
+            DEPLOY_STATUS=$?
+
+            if [ "${DEPLOY_STATUS}" -ne 0 ]; then
+              echo "❌ Target template was not reached."
+            fi
+          fi
+
+          # ======================================================
+          # STEP 3: Wait for MIG stability
+          # ======================================================
+          if [ "${DEPLOY_STATUS}" -eq 0 ]; then
+            echo
+            echo "===== Waiting for MIG stability ====="
+
+            timeout 20m \
+              gcloud compute instance-groups managed wait-until \
+                "${MIG_NAME}" \
+                --project="${GCP_PROJECT_ID}" \
+                --region="${GCP_REGION}" \
+                --stable
+
+            DEPLOY_STATUS=$?
+
+            if [ "${DEPLOY_STATUS}" -ne 0 ]; then
+              echo "❌ MIG did not become stable."
+            fi
+          fi
+
+          # ======================================================
+          # STEP 4: Production smoke test
+          # ======================================================
+          if [ "${DEPLOY_STATUS}" -eq 0 ]; then
+            echo
+            echo "===== Production smoke test ====="
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --retry 10 \
+              --retry-delay 5 \
+              --retry-connrefused \
+              https://laveshsaluja.work.gd/healthz
+
+            DEPLOY_STATUS=$?
+
+            if [ "${DEPLOY_STATUS}" -ne 0 ]; then
+              echo "❌ Production smoke test FAILED."
+            else
+              echo "✅ Production smoke test PASSED."
+            fi
+          fi
+
+          # ======================================================
+          # SUCCESS
+          # ======================================================
+          if [ "${DEPLOY_STATUS}" -eq 0 ]; then
+            echo
+            echo "=================================================="
+            echo "✅ DEPLOYMENT SUCCESSFUL"
+            echo "=================================================="
+
+            exit 0
+          fi
+
+          # ======================================================
+          # FAILURE → ROLLBACK
+          # ======================================================
+          echo
+          echo "=================================================="
+          echo "❌ DEPLOYMENT FAILED"
+          echo "=================================================="
+
+          echo
+          echo "===== STARTING ROLLBACK ====="
+
+          if [ -z "${PREVIOUS_TEMPLATE}" ]; then
+            echo "🚨 CRITICAL: Previous template is empty."
+            echo "Cannot perform automatic rollback."
+            exit 1
+          fi
+
+          echo "Rolling back to:"
+          echo "${PREVIOUS_TEMPLATE}"
+
+          # ======================================================
+          # STEP 5: Restore previous template
+          # ======================================================
+          gcloud compute instance-groups managed set-instance-template \
+            "${MIG_NAME}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --template="${PREVIOUS_TEMPLATE}"
+
+          ROLLBACK_STATUS=$?
+
+          if [ "${ROLLBACK_STATUS}" -ne 0 ]; then
+            echo
+            echo "=================================================="
+            echo "🚨 CRITICAL: ROLLBACK FAILED"
+            echo "=================================================="
+
+            exit 1
+          fi
+
+          # ======================================================
+          # STEP 6: Wait for rollback target
+          # ======================================================
+          echo
+          echo "===== Waiting for rollback target ====="
 
           timeout 20m \
-            gcloud compute instance-groups managed wait-until "${MIG_NAME}" \
+            gcloud compute instance-groups managed wait-until \
+              "${MIG_NAME}" \
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --version-target-reached
 
-      - name: Wait for MIG stability
-        run: |
-          echo "===== Waiting for MIG stability ====="
+          ROLLBACK_STATUS=$?
+
+          if [ "${ROLLBACK_STATUS}" -ne 0 ]; then
+            echo "🚨 Rollback did not reach the previous template."
+            exit 1
+          fi
+
+          # ======================================================
+          # STEP 7: Wait for rollback stability
+          # ======================================================
+          echo
+          echo "===== Waiting for rollback stability ====="
 
           timeout 20m \
-            gcloud compute instance-groups managed wait-until "${MIG_NAME}" \
+            gcloud compute instance-groups managed wait-until \
+              "${MIG_NAME}" \
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --stable
 
-      - name: Verify deployment
-        run: |
-          echo "===== Final MIG state ====="
+          ROLLBACK_STATUS=$?
 
-          gcloud compute instance-groups managed describe "${MIG_NAME}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --format="yaml(
-              targetSize,
-              instanceTemplate,
-              versions,
-              updatePolicy,
-              status
-            )"
+          if [ "${ROLLBACK_STATUS}" -ne 0 ]; then
+            echo "🚨 Rollback MIG did not become stable."
+            exit 1
+          fi
+
+          # ======================================================
+          # STEP 8: Verify rollback
+          # ======================================================
+          echo
+          echo "===== Verifying rollback ====="
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 10 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            https://laveshsaluja.work.gd/healthz
+
+          ROLLBACK_STATUS=$?
+
+          if [ "${ROLLBACK_STATUS}" -ne 0 ]; then
+            echo
+            echo "=================================================="
+            echo "🚨 CRITICAL: ROLLBACK VERIFICATION FAILED"
+            echo "=================================================="
+
+            exit 1
+          fi
+
+          # ======================================================
+          # Rollback succeeded, but deployment failed.
+          # Keep GitHub Actions FAILED intentionally.
+          # ======================================================
+          echo
+          echo "=================================================="
+          echo "⚠️ DEPLOYMENT FAILED — ROLLBACK SUCCESSFUL"
+          echo "=================================================="
 
           echo
-          echo "===== Managed instances ====="
+          echo "Production has been restored to the previous"
+          echo "known-good instance template."
 
-          gcloud compute instance-groups managed list-instances "${MIG_NAME}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}"
+          echo
+          echo "The deployment remains FAILED because the new"
+          echo "version was not successfully deployed."
+
+          exit 1
