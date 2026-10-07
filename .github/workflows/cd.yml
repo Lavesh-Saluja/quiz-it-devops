@@ -149,7 +149,7 @@ jobs:
           gcloud compute instance-groups managed set-instance-template "${MIG_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --template="${TEMPLATE_NAME}"
+            --template="projects/${GCP_PROJECT_ID}/regions/${GCP_REGION}/instanceTemplates/${TEMPLATE_NAME}"
 
       - name: Wait for target template
         run: |
