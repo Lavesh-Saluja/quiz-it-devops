@@ -3,6 +3,8 @@ set -euo pipefail
 
 PROJECT_ID="project-dea1c03a-e235-4567-997"
 IMAGE="__IMAGE__"
+REDIS_HOST="10.60.67.155"
+REDIS_PORT="6379"
 
 # Install Docker and the small set of tools needed by the bootstrap.
 apt-get update
@@ -33,6 +35,7 @@ get_secret() {
 
 PG_PASSWORD="$(get_secret quizit-pg-password)"
 SECRET_KEY_BASE="$(get_secret quizit-secret-key-base)"
+REDIS_PASSWORD="$(get_secret quizit-redis-password)"
 
 # Runtime environment for Rails.
 install -d -m 700 /run/quizit
@@ -48,6 +51,7 @@ PGSSLMODE=require
 SECRET_KEY_BASE=${SECRET_KEY_BASE}
 RAILS_LOG_TO_STDOUT=1
 RAILS_SERVE_STATIC_FILES=1
+REDIS_URL=redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/1
 EOF_ENV
 
 chmod 600 /run/quizit/quizit.env

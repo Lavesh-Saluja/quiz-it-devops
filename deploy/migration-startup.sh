@@ -3,6 +3,8 @@ set -uo pipefail
 
 PROJECT_ID="project-dea1c03a-e235-4567-997"
 IMAGE="__IMAGE__"
+REDIS_HOST="10.60.67.155"
+REDIS_PORT="6379"
 
 STATUS_FILE="/run/quizit/migration-status"
 
@@ -36,6 +38,7 @@ get_secret() {
 
 PG_PASSWORD="$(get_secret quizit-pg-password)"
 SECRET_KEY_BASE="$(get_secret quizit-secret-key-base)"
+REDIS_PASSWORD="$(get_secret quizit-redis-password)"
 
 install -d -m 700 /run/quizit
 
@@ -48,6 +51,7 @@ PG_PASSWORD=${PG_PASSWORD}
 PG_DATABASE=quiz-it_production
 PGSSLMODE=require
 SECRET_KEY_BASE=${SECRET_KEY_BASE}
+REDIS_URL=redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/1
 EOF_ENV
 
 chmod 600 /run/quizit/quizit.env
