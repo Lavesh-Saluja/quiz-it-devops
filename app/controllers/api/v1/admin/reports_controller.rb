@@ -4,7 +4,7 @@ class Api::V1::Admin::ReportsController < ApplicationController
   before_action :load_quiz!
 
   def create
-    authorize [:admin, @quiz]
+    authorize [:admin, @quiz], :download?
     SubmissionsReportJob.perform_async(@quiz.id, @current_user.id)
   end
 
