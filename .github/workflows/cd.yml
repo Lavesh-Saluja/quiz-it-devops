@@ -364,9 +364,9 @@ jobs:
           echo "New template: ${TEMPLATE_NAME}"
           echo "Previous template: ${PREVIOUS_TEMPLATE}"
           DEPLOY_STATUS=0
-          \# ======================================================
-          \# STEP 1: Update MIG
-          \# ======================================================
+          # ======================================================
+          # STEP 1: Update MIG
+          # ======================================================
           echo
           echo "===== Updating MIG instance template ====="
           gcloud compute instance-groups managed set-instance-template \
@@ -378,9 +378,9 @@ jobs:
           if [ "${DEPLOY_STATUS}" -ne 0 ]; then
             echo "❌ Failed to update MIG."
           fi
-          \# ======================================================
-          \# STEP 2: Wait for new template
-          \# ======================================================
+          # ======================================================
+          # STEP 2: Wait for new template
+          # ======================================================
           if [ "${DEPLOY_STATUS}" -eq 0 ]; then
             echo
             echo "===== Waiting for target template ====="
@@ -395,9 +395,9 @@ jobs:
               echo "❌ Target template was not reached."
             fi
           fi
-          \# ======================================================
-          \# STEP 3: Wait for MIG stability
-          \# ======================================================
+          # ======================================================
+          # STEP 3: Wait for MIG stability
+          # ======================================================
           if [ "${DEPLOY_STATUS}" -eq 0 ]; then
             echo
             echo "===== Waiting for MIG stability ====="
@@ -412,9 +412,9 @@ jobs:
               echo "❌ MIG did not become stable."
             fi
           fi
-          \# ======================================================
-          \# STEP 4: Production smoke test
-          \# ======================================================
+          # ======================================================
+          # STEP 4: Production smoke test
+          # ======================================================
           if [ "${DEPLOY_STATUS}" -eq 0 ]; then
             echo
             echo "===== Production smoke test ====="
@@ -433,9 +433,9 @@ jobs:
               echo "✅ Production smoke test PASSED."
             fi
           fi
-          \# ======================================================
-          \# SUCCESS
-          \# ======================================================
+          # ======================================================
+          # SUCCESS
+          # ======================================================
           if [ "${DEPLOY_STATUS}" -eq 0 ]; then
             echo
             echo "=================================================="
@@ -443,9 +443,9 @@ jobs:
             echo "=================================================="
             exit 0
           fi
-          \# ======================================================
-          \# FAILURE → ROLLBACK
-          \# ======================================================
+          # ======================================================
+          # FAILURE → ROLLBACK
+          # ======================================================
           echo
           echo "=================================================="
           echo "❌ DEPLOYMENT FAILED"
@@ -459,9 +459,9 @@ jobs:
           fi
           echo "Rolling back to:"
           echo "${PREVIOUS_TEMPLATE}"
-          \# ======================================================
-          \# STEP 5: Restore previous template
-          \# ======================================================
+          # ======================================================
+          # STEP 5: Restore previous template
+          # ======================================================
           gcloud compute instance-groups managed set-instance-template \
             "${MIG_NAME}" \
             --project="${GCP_PROJECT_ID}" \
@@ -475,9 +475,9 @@ jobs:
             echo "=================================================="
             exit 1
           fi
-          \# ======================================================
-          \# STEP 6: Wait for rollback target
-          \# ======================================================
+          # ======================================================
+          # STEP 6: Wait for rollback target
+          # ======================================================
           echo
           echo "===== Waiting for rollback target ====="
           timeout 20m \
@@ -491,9 +491,9 @@ jobs:
             echo "🚨 Rollback did not reach the previous template."
             exit 1
           fi
-          \# ======================================================
-          \# STEP 7: Wait for rollback stability
-          \# ======================================================
+          # ======================================================
+          # STEP 7: Wait for rollback stability
+          # ======================================================
           echo
           echo "===== Waiting for rollback stability ====="
           timeout 20m \
@@ -507,9 +507,9 @@ jobs:
             echo "🚨 Rollback MIG did not become stable."
             exit 1
           fi
-          \# ======================================================
-          \# STEP 8: Verify rollback
-          \# ======================================================
+          # ======================================================
+          # STEP 8: Verify rollback
+          # ======================================================
           echo
           echo "===== Verifying rollback ====="
           curl \
@@ -528,10 +528,10 @@ jobs:
             echo "=================================================="
             exit 1
           fi
-          \# ======================================================
-          \# Rollback succeeded, but deployment failed.
-          \# Keep GitHub Actions FAILED intentionally.
-          \# ======================================================
+          # ======================================================
+          # Rollback succeeded, but deployment failed.
+          # Keep GitHub Actions FAILED intentionally.
+          # ======================================================
           echo
           echo "=================================================="
           echo "⚠️ DEPLOYMENT FAILED — ROLLBACK SUCCESSFUL"
