@@ -581,7 +581,7 @@ jobs:
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --version="template=${NEW_WORKER_TEMPLATE}" \
-              --max-surge=1 \
+              --max-surge=3 \
               --max-unavailable=0 || WORKER_DEPLOY_STATUS=$?
           fi
           if [ "${WORKER_DEPLOY_STATUS}" -eq 0 ]; then
@@ -620,7 +620,7 @@ jobs:
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --version="template=${PREVIOUS_WORKER_TEMPLATE}" \
-              --max-surge=1 \
+              --max-surge=3 \
               --max-unavailable=0; then
             if ! timeout 20m gcloud compute instance-groups managed wait-until \
                 "${WORKER_MIG_NAME}" \
@@ -655,7 +655,7 @@ jobs:
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --version="template=${PREVIOUS_WEB_TEMPLATE}" \
-              --max-surge=1 \
+              --max-surge=3 \
               --max-unavailable=0; then
             if ! timeout 20m gcloud compute instance-groups managed wait-until \
                 "${MIG_NAME}" \
