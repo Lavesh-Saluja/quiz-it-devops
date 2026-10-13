@@ -72,7 +72,7 @@ jobs:
             > /tmp/quizit-startup.sh
           echo "===== Generated image reference ====="
           grep '^IMAGE=' /tmp/quizit-startup.sh
-          grep -Fqx "IMAGE=\\"${IMAGE}\\"" /tmp/quizit-startup.sh
+          grep -Fqx "IMAGE=\"${IMAGE}\"" /tmp/quizit-startup.sh
       - name: Create regional instance template
         env:
           TEMPLATE_NAME: quizit-web-template-${{ github.sha }}
@@ -139,7 +139,7 @@ jobs:
           sed "s|__IMAGE__|${IMAGE}|g" \
             deploy/worker-startup.sh \
             > /tmp/worker-startup.sh
-          grep -Fqx "IMAGE=\\"${IMAGE}\\"" /tmp/worker-startup.sh
+          grep -Fqx "IMAGE=\"${IMAGE}\"" /tmp/worker-startup.sh
           chmod 700 /tmp/worker-startup.sh
       - name: Create regional worker instance template
         env:
@@ -201,7 +201,7 @@ jobs:
             > /tmp/quizit-migration-startup.sh
           echo "===== Migration image ====="
           grep '^IMAGE=' /tmp/quizit-migration-startup.sh
-          grep -Fqx "IMAGE=\\"${IMAGE}\\"" /tmp/quizit-migration-startup.sh
+          grep -Fqx "IMAGE=\"${IMAGE}\"" /tmp/quizit-migration-startup.sh
 # ----------------------------------------------------------
 # Create temporary migration VM.
 #
