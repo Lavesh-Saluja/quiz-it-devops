@@ -51,12 +51,25 @@ FROM base AS runtime
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
-      git \
-      libpq5 \
-      libxml2 \
-      libxslt1.1 \
-      ca-certificates && \
+    git \
+    curl \
+    libpq5 \
+    libxml2 \
+    libxslt1.1 \
+    ca-certificates \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libxrender1 \
+    libfontconfig1 \
+    libfreetype6 \
+    libx11-6 \
+    libxext6 && \
     rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL \
+    https://github.com/newinnovations/wkhtml-packaging/releases/download/2026-05-06/wkhtmltopdf_0.12.6.1-trixie_amd64 \
+    -o /usr/local/bin/wkhtmltopdf && \
+    chmod +x /usr/local/bin/wkhtmltopdf
 
 COPY --from=build /usr/local/bundle /usr/local/bundle
 
