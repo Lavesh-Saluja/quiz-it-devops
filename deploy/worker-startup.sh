@@ -40,6 +40,7 @@ install -d -m 700 /run/quizit
 
 cat > /run/quizit/quizit.env <<EOF_ENV
 RAILS_ENV=production
+GCP_PROJECT_ID=${PROJECT_ID}
 
 PG_HOST=10.60.64.3
 PG_PORT=5432
